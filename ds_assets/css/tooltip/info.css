@@ -1,0 +1,47 @@
+/* Icon */
+
+.icon2 {
+    text-decoration: none;
+    border-bottom: none;
+    position: relative;
+}
+
+.icon2:before {
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-font-smoothing: antialiased;
+    font-family: FontAwesome;
+    font-style: normal;
+    font-weight: normal;
+    text-transform: none !important;
+}
+
+.icon2>.label {
+    display: none;
+}
+
+/* Tooktip */
+
+.tooltip2 {
+    position: relative;
+    display: inline-block;
+    border-bottom: 1px dotted black;
+}
+
+.tooltip2 .tooltiptext {
+    visibility: hidden;
+    min-width: 30vw;
+    top: 100%;
+    left: 50%;
+    position: absolute;
+    margin-left: -15vw;
+    background-color: rgba(250, 250, 250, 1);
+    box-shadow: 2px 2px 2px 2px #ccc;
+    text-align: left;
+    padding: 15px;
+    border-radius: 6px;
+    z-index: 1;
+}
+
+.tooltip2:hover .tooltiptext {
+    visibility: visible;
+}
