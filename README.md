@@ -1,4 +1,4 @@
-# Indigenous Geospatial Data sovereignty web application integrated into Geonode
+# Indigenous Geospatial Data sovereignty web application integrated within Geonode
 
 **Changes to Layers upload and Layer detail pages**
 
