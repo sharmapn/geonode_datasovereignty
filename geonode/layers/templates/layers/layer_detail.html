@@ -1,0 +1,1685 @@
+{% extends "layers/layer_base.html" %}
+{% load i18n %}
+{% load staticfiles %}
+{% load dialogos_tags %}
+{% load pinax_ratings_tags %}
+{% load bootstrap_tags %}
+{% load pagination_tags %}
+{% load base_tags %}
+{% load guardian_tags %}
+{% load client_lib_tags %}
+{% load proxy_lib_tags %}
+{% load layer_tags %}
+
+{% block title %}{{ resource.title|default:resource.alternate }} — {{ block.super }}{% endblock %}
+
+{% block head %}
+
+  <META HTTP-EQUIV="Access-Control-Allow-Origin" CONTENT="{{ SITEURL }}">
+
+  {% if TWITTER_CARD %}
+    {% include "base/_resourcebase_twittercard.html" %}
+  {% endif %}
+
+  {% if OPENGRAPH_ENABLED %}
+    {% include "base/_resourcebase_opengraph.html" %}
+  {% endif %}
+  <script type="text/javascript">
+    // this is used by thumbnail.js to POST to the thumbnail update view
+    window.thumbnailUpdateUrl = '{% url 'layers-set-thumb-from-bbox' resource.id %}';
+  </script>
+  <script type="text/javascript" src="{% static "geonode/js/utils/thumbnail.js" %}"></script>
+  {% get_layer_detail %}
+{{ block.super }}
+{% endblock %}
+
+<script type="text/javascript">
+  const encrypted_file_from_server;
+	//Create sensitive data layer and add styling
+	var sensitive = {
+		style: new ol.style.Style({
+			image: new ol.style.Circle({
+				radius: 3,
+				fill: new ol.style.Fill({
+					color: '#FF8078'
+				}),
+				stroke: new ol.style.Stroke({
+					color: 'black',
+					width: .5
+				})
+			})
+		}),
+	};
+  </script>
+
+
+
+
+
+
+{% block body_class %}layers{% endblock %}
+
+{% block body_outer %}
+<div class="page-header">
+    <style>
+    #paneltbar {
+      margin-top: 1px !important;
+    }
+    </style>
+
+    <h2 class="page-title">{{ resource.title|default:resource.alternate }}</h2>
+    {% if storeType == 'remoteStore' %}
+    <em>
+      <i class="fa fa-power-off {% if online %}text-success{% else %}text-danger{% endif %}"></i> {% trans "Service is" %} {% if online %}{% trans "online" %}{% else %}{% trans "offline" %}{% endif %} 
+    </em>
+    {% endif %}
+</div>
+
+<div class="row">
+  <div class="col-md-8">
+
+    <div id="embedded_map" class="mrg-btm">
+      <div id="preview_map"></div>
+    </div>
+
+    <div class="layer-actions">
+      {% include "_actions.html" %}
+    </div>
+
+    <div class="tab-content">
+      <article id="info" class="tab-pane{% if tab == 'info' or not tab %} active{% endif %}">
+        {% include "base/resourcebase_info_panel.html" %}
+
+        {% if USE_GEOSERVER and DISPLAY_WMS_LINKS %}
+        <p>
+          {% if request.user.is_authenticated and access_token %}
+            <a href="{% url 'capabilities_layer' resource.id %}?access_token={{access_token}}">
+          {% else %}
+            <a href="{% url 'capabilities_layer' resource.id %}">
+          {% endif %}
+          <i class="fa fa-map"></i> {% trans 'Layer WMS GetCapabilities document' %}</a></p>
+        {% endif %}
+      </article>
+
+      {% if resource.is_mosaic %}
+      <article id="granules" class="description tab-pane {% if tab and tab == 'granules' %}active{% endif %}">
+        <div class="paginate-contents">
+
+            <form method="GET" action="{% url "layer_detail" resource.layer.service_typename %}">
+                {% csrf_token %}
+                <input type="text" id="filter" name="filter" style="witdh:400px"/>&nbsp;<input type="submit" value='{% trans "Filter Granules" %}'/>
+                <br/>
+                {% if filter %}
+                <strong>{% trans "Active Filter:" %}</strong> <em>{{ filter }}</em>
+                {% endif %}
+            </form>
+            <table class="table table-striped table-bordered table-condensed">
+              <thead>
+                <tr>
+                  <!-- th>{% trans "Granule ID" %}</th -->
+                  <th>{% trans "Bounding Box" %} (minX,minY,maxX,maxY)</th>
+                  <th>{% trans "Time" %}</th>
+                  <!-- th>{% trans "Elevation" %}</th -->
+                  <th>{% trans "Actions" %}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% autopaginate all_granules.features 10 %}
+                {% for feature in granules.features %}
+                  <tr>
+                    <!-- td>{{ feature.id }}</td -->
+                    <td><script language="Javascript">var bbox = JSON.parse('{{ feature.geometry.coordinates }}'); document.write('{{ granules.crs.properties.name }};' + bbox[0][0][0] + ',' + bbox[0][0][1] + ',' + bbox[0][2][0] + ',' + bbox[0][2][1]);</script></td>
+                    <td>{% if feature.properties.time %}{{ feature.properties.time }}{% endif %}</td>
+                    <!-- td>{% if feature.properties.elevation %}{{ feature.properties.elevation }}{% endif %}</td -->
+                    <td>
+                        <a class="btn btn-xs" href="#" onclick="doPreview('{{ resource.service_typename }}', '{{ feature.id }}', '{{ granules.crs.properties.name }}', '{{ feature.geometry.coordinates }}', {% if feature.properties.time %}'{{ feature.properties.time }}'{% else %}null{% endif %});"><img alt="{% trans "Granule Preview" %}" title="{% trans "Granule Preview" %}" src="{% static 'lib/img/map_go.png' %}"/></a>
+                        <a class="btn btn-xs" href="{% url "layer_granule_remove" feature.id resource.service_typename %}"><img alt="{% trans "Granule Remove" %}" title="{% trans "Granule Remove" %}" src="{% static 'lib/img/cancel-on.png' %}"/></a>
+                        <script language="Javascript">
+                            function doPreview(layer_name, feature_id, srs, the_geom, time) {
+                                var map = app.mapPanel.map;
+                                for (var ll = 0; ll < app.map.layers.length; ll++) {
+                                    var layer = app.map.layers[ll];
+                                    if (layer.name == layer_name) {
+                                        if (time) {
+                                            var re = new RegExp("(\\+[0-9]{4})", "gm");
+                                            var timePosition = time;
+                                            if (re.test(time)) timePosition = time.replace(re, 'Z');
+                                            map.layers[ll].mergeNewParams({"TIME" : timePosition, "CQL_FILTER" : "IN ('" + feature_id + "')"});
+                                        }
+                                        else {
+                                            map.layers[ll].mergeNewParams({"CQL_FILTER" : "IN ('" + feature_id + "')"});
+                                        }
+
+                                        map.layers[ll].addOptions({
+                                            singleTile: true
+                                        });
+
+                                        bbox = JSON.parse(the_geom);
+                                        bbox = new OpenLayers.Bounds(bbox[0][0][0],bbox[0][0][1],bbox[0][2][0],bbox[0][2][1]).transform(srs, map.projection);
+
+                                        //map.maxExtent = bbox;
+                                        //map.restrictedExtent = bbox;
+                                        map.maxExtent = new OpenLayers.Bounds(-20037508.34,-20037508.34,20037508.34,20037508.34);
+                                        map.restrictedExtent = map.maxExtent;
+
+                                        map.zoomToExtent(bbox);
+                                    }
+                                }
+                            }
+                        </script>
+                    </td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+        </div>
+        {% paginate %}
+      </article>
+     {% endif %}
+
+      <article id="attributes" class="tab-pane">
+        {% if resource.is_mosaic %}
+            <table class="table table-striped table-bordered table-condensed">
+              <thead>
+                <tr>
+                  <th>{% trans "Dimension" %}</th>
+                  <th>{% trans "Enabled" %}</th>
+                  <th>{% trans "Regex" %}</th>
+                </tr>
+              </thead>
+              <tbody>
+                  <tr>
+                    <td title="TIME">{% trans "TIME" %}</td>
+                    <td>{% if resource.has_time %}{% trans "True" %}{% else %}{% trans "False" %}{% endif %}</td>
+                    <td>{% if resource.time_regex %}{{ resource.time_regex }}{% else %}&nbsp;{% endif %}</td>
+                  </tr>
+                  <!-- tr>
+                    <td title="ELEVATION">{% trans "ELEVATION" %}</td>
+                    <td>{% if resource.has_elevation %}{% trans "True" %}{% else %}{% trans "False" %}{% endif %}</td>
+                    <td>{% if resource.elevation_regex %}{{ resource.elevation_regex }}{% else %}&nbsp;{% endif %}</td>
+                  </tr -->
+              </tbody>
+            </table>
+        {% endif %}
+        {% if resource.attribute_set.all %}
+            <table class="table table-striped table-bordered table-condensed">
+              <thead>
+                <tr>
+                  <th>{% trans "Attribute Name" %}</th>
+                  <th>{% trans "Label" %}</th>
+                  <th>{% trans "Description" %}</th>
+                  {% if wps_enabled %}
+                    <th>{% trans "Range" %}</th>
+                    <th>{% trans "Average" %}</th>
+                    <th>{% trans "Median" %}</th>
+                    <th>{% trans "Standard Deviation" %}</th>
+                  {% endif %}
+                </tr>
+              </thead>
+              <tbody>
+                {% for attribute in resource.attributes %}
+                  <tr>
+                    <td {% if attribute.attribute_label and attribute.attribute_label != attribute.attribute %}title="{{ attribute.attribute }}"{% endif %}>{{ attribute.attribute }}</td>
+                    <td {% if attribute.attribute_label and attribute.attribute_label != attribute.attribute %}title="{{ attribute.attribute }}"{% endif %}>{{ attribute.attribute_label|default:"" }}</td>
+                    <td>{{ attribute.description|default:"" }}</td>
+                    {% if wps_enabled %}
+                      {% if attribute.unique_values == "NA" %}
+                      <td>{{ attribute.unique_values }}</td>
+                      {% else %}
+                      <td>
+                        <select name="unique_values">
+                        {% for value in attribute.unique_values_as_list %}
+                          <option value="{{ value }}">{{ value }}</option>
+                        {% endfor %}
+                        </select>
+                      </td>
+                      {% endif %}
+                      <td>{{ attribute.average|floatformat:"2" }}</td>
+                      <td>{{ attribute.median|floatformat:"2" }}</td>
+                      <td>{{ attribute.stddev|floatformat:"2" }}</td>
+                    {% endif %}
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+        {% endif %}
+      </article>
+
+      {% block social_links %}
+      {% if DISPLAY_SOCIAL %}
+        {% include "social_links.html" %}
+      {% endif %}
+      {% endblock %}
+
+      {% if DISPLAY_COMMENTS %}
+      <article id="comments" class="tab-pane">
+        {% with resource as obj %}
+          {% include "_comments.html" %}
+        {% endwith %}
+      </article>
+      {% endif %}
+      
+      {% if DISPLAY_VERIFICATION %}
+      <article id="verification" class="tab-pane"> 
+        {% with resource as obj %}       
+          {% include "_verification.html" %}  
+        {% endwith %}     
+      </article>
+      {% endif %}
+      
+      
+
+      {% if DISPLAY_RATINGS %}
+      <article id="rate" class="tab-pane">
+        <!-- TODO: Move this to a reusable template snippet -->
+        {% if request.user.is_authenticated %}
+        <h4>{% trans "Rate this layer" %}</h4>
+        {% user_rating request.user resource "layer" as user_layer_rating %}
+        <div id="user_rating" class="category-layer" data-score="{{ user_layer_rating }}"></div>
+        {% endif %}
+        <h4>{% trans 'Average Rating' %}</h4>
+        {% overall_rating resource "layer" as layer_rating %}
+        {% num_ratings resource as num_votes %}
+        <div class="overall_rating" data-score="{{ layer_rating }}"></div> ({{num_votes}})
+      </article>
+      {% endif %}
+
+      {% if FAVORITE_ENABLED %}
+      <article class="tab-pane" id="favorite">
+        {% include "favorite/_favorite.html" %}
+      </article>
+      {% endif %}
+    </div>
+
+  </div>
+  
+  <!-- <div id="map" style="height:40vh; width: 79vh"></div> -->
+
+  <div class="col-md-4">
+
+    <ul class="list-group">
+      {% if resource.storeType != "remoteStore" %}
+        {% if link_geotiff_io %}
+        <li class="list-group-item">
+          <a href="{{link_geotiff_io}}" class="btn btn-primary btn-block" target="_blank">{% trans "Analyze with" %} GeoTIFF.io</a>
+        </li>
+        {% endif %}
+        <li class="list-group-item">
+        {% if links_download %}
+           <button class="btn btn-primary btn-md btn-block" data-toggle="modal" data-target="#download-layer">{% trans "Download Layer" %}</button>
+        {% else %}
+          {% if request.user.is_authenticated %}
+          <button class="btn btn-primary btn-md btn-block" id="request-download">{% trans "Request Download" %}</button>
+          {% endif %}
+        {% endif %}
+        </li>
+      {% endif %}
+    <div class="modal fade" id="download-layer" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
+            <h4 class="modal-title" id="myModalLabel">{% trans "Download Layer" %}</h4>
+          </div>
+          <div class="modal-body">
+            <div class="tabbable">
+                <ul class="nav nav-tabs">
+                    {% if links %}
+                    <li class="active"><a href="#download_tab1" data-toggle="tab">{% trans "Images" %}</a></li>
+                    {% endif %}
+                    {% if links_download %}
+                    <li><a href="#download_tab2" data-toggle="tab">{% trans "Data" %}</a></li>
+                    {% endif %}
+                </ul>
+                <div class="tab-content">
+                {% if links %}
+                    <div class="tab-pane active" id="download_tab1">
+                        <li class="active">
+                            <ul>
+                              {% for link in links %}
+                                <li><a href="{{ link.url }}" target="_blank">{% trans link.name %}</a></li>
+                              {% endfor %}
+                            </ul>
+                        </li>
+                    </div>
+                {% endif %}
+                {% if links_download %}
+                    {% if not links %}
+                    {#  if links doesn't exist, make this tab active by default #}
+                    <div class="tab-pane active" id="download_tab2">
+                    {% else %}
+                    <div class="tab-pane" id="download_tab2">
+                    {% endif %}
+                      </br>
+
+                      <!-- DOWNLOAD FILTER - START -->
+
+                      {% if layer_type == "vector" %}
+                        <button type="button" id = "button-toggle" class="btn btn-primary btn-circle" data-toggle="button" data-toggle="tooltip" title="{% trans "Click to filter the layer" %}">
+                          {% trans "Do you want to filter it?" %}
+                        </button>
+                        <img src="{% static 'geonode/img/geonode_icon.png' %}" class="gear pull-right loading_msg" witdth="30" height="30" style="margin-right:10px; display:none"/>
+                        <div class="pull-right loading_msg" style="margin-right:10px;margin-top:5px;display:none">{% trans "Loading..." %}</div>
+                        </br></br>
+                      {% endif %}
+                        <ul class="nav nav-tabs" id="tabContent" style="display: none;">
+                          <li class="active"><a href="#query_builder" data-toggle="tab">{% trans "Filter by attributes" %}</a></li>
+                        </ul>
+                      </br>
+
+                      <div class="tab-content query_builder_tab" style="display:none;">
+                        <div id="query_builder" class="tab-pane fade in active">
+                            <div class="form-inline">
+                            {% trans "Match" %}
+                              <div class="input-group" style=" display: inline-table; vertical-align: middle; width: auto;  ">
+                                <div class="input-group-btn" id="drop_operator_list">
+                                <div class="btn-group btn-group-xs">
+                                    <div class="dropdown">
+                                      <button class="btn btn-primary btn-xs dropdown-toggle" id="modal-button-and-or" type="button" data-toggle="dropdown" value="AND">
+                                        <span class="caret"></span></button>
+                                        <ul class="dropdown-menu dropdown-menu-and-or" id="and-or_list" data-modal-button-id="and-or">
+                                          <li><a href="#" id="AND">{% trans "all" %}</a></li>
+                                          <li><a href="#" id="OR">{% trans "any" %}</a></li>
+                                        </ul>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            {% trans "of the following:" %}
+                            </div>
+                            </br></br>
+                            <div class="input-group" id = "query-filter-tools">
+                              <div class="input-group-btn">
+                                <div class="btn-group btn-group-sm">
+                                    <div class="dropdown">
+                                      <button class="btn btn-primary dropdown-toggle" id="modal-button-attributes" type="button" data-toggle="dropdown">{% trans "Attribute" %}<span class="caret"></span></button>
+                                      <ul class="dropdown-menu dropdown-menu-attribute" id="attribute_list" data-modal-button-id="attribute">
+                                        {% if schema %}
+                                          {% for key, values in schema.properties.items %}
+                                            <li><a href="#" id={{ key }} data-type={{ values }} data-schema= 'yes'>{{ key }}</a></li>
+                                          {% endfor %}
+                                        {% elif resource.attributes %}
+                                          {% for attribute in resource.attributes %}
+                                            <li><a href="#" id={{ attribute.attribute }} data-type='string' data-schema='no'>{{ attribute }}</a></li>
+                                          {% endfor %}
+                                        {% endif %}
+                                      </ul>
+                                    </div>
+                                </div>
+                                <div class="btn-group btn-group-sm">
+                                  <div class="dropdown">
+                                    <button class="btn btn-primary dropdown-toggle" id="modal-button-operator" type="button" data-toggle="dropdown">{% trans "Operator" %}<span class="caret"></span></button>
+                                    <ul class="dropdown-menu dropdown-menu-operator" id="operator_list" data-modal-button-id="operator">
+                                      <li><a href="#" id="=">=</a></li>
+                                      <li><a href="#" id="&lt;&gt;">&lt;&gt;</a></li>
+                                      <li><a href="#" id="&gt;">&gt;</a></li>
+                                      <li><a href="#" id="&lt;">&lt;</a></li>
+                                      <li><a href="#" id="&gt;=">&gt;=</a></li>
+                                      <li><a href="#" id="&lt;=">&lt;=</a></li>
+                                      <li role="separator" class="divider"></li>
+                                      <li><a href="#" id=" LIKE ">LIKE</a></li>
+                                    </ul>
+                                  </div>
+                                </div>
+                              </div>
+                              <select class="form-control js-data-array" style="position:static;" id="single_value" placeholder="" data-toggle="tooltip" title=""></select>
+                              <div class="input-group-btn" id="button_query">
+                                <a href="#" id="query_part" class="btn btn-primary btn-mg" data-toggle="modal" data-target="#myModal" title=""><span class="glyphicon glyphicon-plus"></span></a>
+                              </div>
+                            </div>
+                            </br>
+                            <div class="text_area">
+                              <div class="form-group" id="added_rules"></div>
+                              <div>
+                                  <p id="whole_query"> </p>
+                              </div>
+                            </div>
+                            <label style="font-weight: normal;">{% trans "Feature limit" %}: </label>
+                            <input type="text" id="max_features" name="filter" style="width: 50px"/>
+                            <a href='#' id="clear_filter" style="float:right;">{% trans "Clear" %}</a> </br>
+                          </div>
+                        <hr id="hr_filter_layer" />
+                      </div>
+
+                      <!-- DOWNLOAD FILTER - END -->
+
+                      <h4>{% trans "Pick your download format:" %}</h4>
+                      <ul>
+                        {% for link in links_download %}
+                          {% if link.name == 'Original Dataset' %}
+                            {% original_link_available resource.id link.url as original_dwn_link_available %}
+                            {% if original_dwn_link_available %}
+                            <li><a href="{{ link.url }}" target="_blank" id="{{ link.name | slugify }}" class="urls">{% trans link.name %}</a></li>
+                            {% else %}
+                            <!-- Hide the link instead. Uncomment the lines below to present a warning to the users. -->
+                            <!-- li><a href="javascript:thumbnailFeedbacks('{% trans "No data available for this resource. Please contact a system administrator or a manager." %}', '{% trans "Warning" %}');" id="{{ link.name | slugify }}" class="urls">{% trans link.name %}</a></li -->
+                            {% endif %}
+                          {% else %}
+                            <li><a href="{{ link.url }}" target="_blank" id="{{ link.name | slugify }}" class="urls">{% trans link.name %}</a></li>
+                          {% endif %}
+                        {% endfor %}
+                      </ul>
+                    </div>
+                {% endif %}
+                </div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-default" data-dismiss="modal">{% trans "Close" %}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if GEOSERVER_BASE_URL %}
+      {% get_obj_perms request.user for resource.layer as "layer_perms" %}
+    {% endif %}
+
+    <li class="list-group-item">
+      <a href="{% url "layer_metadata_detail" resource.alternate %}">
+        <button class="btn btn-primary btn-md btn-block">{% trans "Metadata Detail" %}</button>
+      </a>
+    </li>
+    {% display_edit_request_button resource request.user perms_list as display_request_button %}
+    {% if display_request_button %}
+        <li class="list-group-item">
+            <a href="{% url "owner_rights_request" resource.id %}">
+                <button class="btn btn-primary btn-md btn-block">{% trans "Request change" %}</button>
+            </a>
+        </li>
+    {% endif %}
+    {% if not READ_ONLY_MODE %}
+      {% if "change_resourcebase_metadata" in perms_list or "change_resourcebase" in perms_list or "delete_resourcebase" in perms_list or "change_layer_style" in layer_perms %}
+      <li class="list-group-item">
+        <button class="btn btn-primary btn-md btn-block" data-toggle="modal" data-target="#edit-layer">{% trans "Editing Tools" %}</button>
+      </li>
+      <div class="modal fade" id="edit-layer" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+          <div class="modal-content">
+            <div class="modal-header">
+              <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
+              <h4 class="modal-title" id="myModalLabel">{% trans "Edit Layer" %}</h4>
+            </div>
+            <div class="modal-body">
+              <div class="row edit-modal">
+                {% if "change_resourcebase_metadata" in perms_list %}
+                <div class="col-sm-3">
+                  <i class="fa fa-list-alt fa-3x"></i>
+                  <h4>{% trans "Metadata" %}</h4>
+                  <a class="btn btn-default btn-block btn-xs" href="{% url "layer_metadata" resource.service_typename %}">{% trans "Wizard" %}</a>
+                  <a class="btn btn-default btn-block btn-xs" href="{% url "layer_metadata_advanced" resource.service_typename %}">{% trans "Advanced Edit" %}</a>
+                  <a class="btn btn-default btn-block btn-xs" href="{% url "layer_metadata_upload" resource.service_typename %}">{% trans "Upload Metadata" %}</a>
+                </div>
+                {% endif %}
+                {% if GEOSERVER_BASE_URL and not resource.service %}
+                  {% if "change_layer_style" in layer_perms %}
+                    {% if resource.storeType != "remoteStore" %}
+                    <div class="col-sm-3">
+                      <i class="fa fa-tint fa-3x"></i>
+                      <h4>{% trans "Styles" %}</h4>
+                      {% if preview == 'react' or preview == 'leaflet' %}
+                        <a class="btn btn-default btn-block btn-xs style-edit" data-dismiss="modal" href="#">{% trans "Edit" %}</a>
+                      {% else %}
+                        <a class="btn btn-default btn-block btn-xs style-edit" href="{% url "layer_sld_edit" resource.service_typename %}">{% trans "Edit" %}</a>
+                      {% endif %}
+                      <a class="btn btn-default btn-block btn-xs" href="{% url "layer_sld_upload" resource.service_typename %}">{% trans "Upload" %}</a>
+                      <a class="btn btn-default btn-block btn-xs" href="{% url "layer_style_manage" resource.service_typename %}">{% trans "Manage" %}</a>
+                    </div>
+                    {% endif %}
+                  {% endif %}
+                {% endif %}
+                {% if "change_resourcebase" in perms_list %}
+                <div class="col-sm-3">
+                  <i class="fa fa-photo fa-3x"></i>
+                  <h4>{% trans "Thumbnail" %}</h4>
+                  {% if resource.storeType != "remoteStore" %}
+                    <a class="btn btn-default btn-block btn-xs" href="#" id="set_thumbnail">{% trans "Set" %}</a>
+                  {% endif %}
+                  <a class="btn btn-default btn-block btn-xs" href="{% url "thumbnail_upload" resource.resourcebase_ptr.id %}">{% trans "Upload" %}</a>
+                </div>
+                {% endif %}
+                {% if "change_resourcebase" in perms_list or "delete_resourcebase" in perms_list or "change_layer_data" in layer_perms %}
+                <div class="col-sm-3">
+                  <i class="fa fa-square-o fa-3x rotate-45"></i>
+                  <h4>{% trans "Layer" %}</h4>
+                  {% if "change_resourcebase" in perms_list and resource.storeType != "remoteStore" %}
+                  <a class="btn btn-default btn-block btn-xs" href="{% url "layer_replace" resource.service_typename %}">{% trans "Replace" %}</a>
+                  {% endif %}
+                  {% if "change_resourcebase" in perms_list and resource.storeType != "remoteStore" %}
+                  <a class="btn btn-default btn-block btn-xs" href="{% url "layer_append" resource.service_typename %}">{% trans "Append Data" %}</a>
+                  {% endif %}
+                  {% if "change_layer_data" in layer_perms and OGC_SERVER.default.BACKEND == 'geonode.geoserver' %}
+                    {% if layer_type != "raster" and resource.storeType != "remoteStore" %}
+                    <a class="btn btn-default btn-block btn-xs" href="{% url "new_map" %}?layer={{resource.service_typename}}&storeType={{resource.storeType}}">{% trans "Edit data" %}</a>
+                    {% endif %}
+                  {% endif %}
+                  {% if "delete_resourcebase" in perms_list %}
+                  <a class="btn btn-danger btn-block btn-xs" href="{% url "layer_remove" resource.service_typename %}">{% trans "Remove" %}</a>
+                  {% endif %}
+                </div>
+                {% endif %}
+              </div>
+            </div>
+            <div class="modal-footer">
+              <button type="button" class="btn btn-default" data-dismiss="modal">{% trans "Close" %}</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    {% endif %}
+
+    <li class="list-group-item">
+      <a href="{% url "new_map" %}?layer={{resource.service_typename}}&view=True" class="btn btn-default btn-md btn-block">{% trans "View Layer" %}</a>
+    </li>
+
+    <li class="list-group-item">
+      <button class="btn btn-default btn-md btn-block" data-toggle="modal" data-target="#download-metadata">{% trans "Download Metadata" %}</button>
+    </li>
+
+    <div class="modal fade" id="download-metadata" tabindex="-1" role="dialog" aria-labelledby="myModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header">
+            <button type="button" class="close" data-dismiss="modal" aria-hidden="true">&times;</button>
+            <h4 class="modal-title" id="myModalLabel">{% trans "Download Metadata" %}</h4>
+          </div>
+          <div class="modal-body">
+            <div style="margin-bottom:20px">
+                <h5 class="modal-title" id="myModalLabel">
+                {% trans "Full metadata" %}
+                </h5>
+                <ul>
+                    <li><a target="_blank" href="{% url 'csw_render_extra_format_txt'  resource.uuid resource.title|slugify %}"> {% trans "Text format" %} </a></li>
+                    <li><a target="_blank" href="{% url 'csw_render_extra_format_html' resource.uuid resource.title|slugify %}"> {% trans "HTML format" %} </a></li>
+                </ul>
+            </div>
+            <div style="margin-bottom:20px">
+                <h5 class="modal-title" id="myModalLabel">
+                {% trans "Standard Metadata - XML format" %}
+                </h5>
+                <ul>
+                   {% for link in metadata %}
+                   <li><a href="{{ link.url }}" target="_blank">{{ link.name }}</a></li>
+                   {% endfor %}
+                <ul>
+            </div>
+            {% if resource.storeType == 'dataStore' %}
+            <h5 class="modal-title" id="myModalLabel">{% trans "Attribute Information" %}</h5>
+            <ul>
+              <li><a href="{{ resource.get_absolute_url }}/feature_catalogue" target="_blank">{% trans "ISO Feature Catalogue" %}</a></li>
+            <ul>
+            {% endif %}
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-default" data-dismiss="modal">{% trans "Close" %}</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if user.is_authenticated and not READ_ONLY_MODE %}
+       <li class="list-group-item"> 
+        <h4>{% trans "Verification" %}</h4>
+        <ol class="switches">        
+          <input type="checkbox" id="hashVerified">
+          <label for="1">
+            <span>...</span> 
+            <span></span> 
+          </label>
+        
+        <!-- more list items here -->
+      </ol>
+        <!--
+        <p>{% trans "Click the button below to generate a new map based on this layer." %}</p>
+          <a href="{% url "new_map" %}?layer={{resource.service_typename}}" class="btn btn-primary btn-block">{% trans "Create a Map" %}</a>
+        -->     
+      </li>  
+    {% endif %}
+    {% if resource.get_legend %}
+    <li class="list-group-item">
+      <h4 class="list-group-item-heading">{%trans "Legend" %}</h4>
+      {% if resource.default_style %}
+      {% get_all_resource_styles resource as resource_styles_all%}
+      {% for style in resource_styles_all %}
+        {% if style.name or style.sld_title %}
+          {% if resource.default_style == style or resource.default_style.name == style.name or style.sld_title and resource.default_style.sld_title == style.sld_title %}
+              {% for legend in resource.get_legend %}
+                  {% get_sld_name_from_url style.sld_url as sld_name %}
+                  {% get_style_name_from_legend_url legend.url as legend_style_name %}
+                  {% if legend.link_type == 'image' and sld_name == legend_style_name %}
+                    <p id="legend_sld_title" style="font-size:10px">{{ style.sld_title|default:style.name }}</p>
+                    {% if request.user.is_authenticated and access_token %}
+                        <p><img id="legend_icon" src="{{ legend.url }}&access_token={{access_token}}"></p>
+                    {% else %}
+                        <p><img id="legend_icon" src="{{ legend.url }}"></p>
+                    {% endif %}
+                  {% else %}
+                  <div id='legend_placeholder'></div>
+                  {% endif %}
+              {% endfor %}
+          {% endif %}
+        {% endif %}
+      {% endfor %}
+      {% else %}
+        {% for legend in resource.get_legend %}
+            <p><img id="legend_icon" src="{{ legend.url }}"></p>
+        {% endfor %}
+      {% endif %}
+    </li>
+    {% endif %}
+    <li class="list-group-item">
+      <h4>{% trans "Maps using this layer" %}</h4>
+        {% if map_layers %}
+        <p>{% trans "List of maps using this layer:" %}</p>
+        {% endif %}
+        <ul class="list-unstyled">
+          {% for maplayer in map_layers %}
+            <li><a href="{{ maplayer.map.get_absolute_url }}">{{ maplayer.map.title }}</a></li>
+          {% empty %}
+            <li>{% trans "This layer is not currently used in any maps." %}</li>
+          {% endfor %}
+        </ul>
+    </li>
+    {% if user.is_authenticated and not READ_ONLY_MODE %}
+      <li class="list-group-item">
+        <h4>{% trans "Create a map using this layer" %}</h4>
+        <p>{% trans "Click the button below to generate a new map based on this layer." %}</p>
+          <a href="{% url "new_map" %}?layer={{resource.service_typename}}" class="btn btn-primary btn-block">{% trans "Create a Map" %}</a>
+      </li>
+    {% endif %}
+    {% if maps %}
+        <li class="list-group-item">
+            <h4>{% trans "Add the layer to an existing map" %}</h4>
+            <form action="{% url "add_layer" %}" method="GET">
+                {% csrf_token %}
+                <select name="map_id">
+                {% for map in maps %}
+                <option value="{{ map.id }}">{{ map.title|truncatechars:40 }}</option>
+                {% endfor %}
+                </select>
+                <p>{% trans "Click the button below to add the layer to the selected map." %}</p>
+                <input type="hidden" name="layer_name" value="{{ resource.alternate }}">
+                <input type="submit" class="btn btn-primary btn-block" value="{% trans "Add to Map" %}">
+            </form>
+        </li>
+    {% endif %}
+
+    {% if documents.count > 0 %}
+    <li class="list-group-item">
+      <h4>{% trans "Documents related to this layer" %}</h4>
+      <p>{% trans "List of documents related to this layer:" %}</p>
+      <ul class="list-unstyled">
+        {% for document in documents %}
+          <li><a href="{{ document.get_absolute_url }}">{{ document.title }}</a></li>
+        {% endfor %}
+      </ul>
+    </li>
+    {% endif %}
+
+    {% if OGC_SERVER.default.BACKEND == 'geonode.geoserver' and resource.storeType != "remoteStore" %}
+    <li class="list-group-item">
+      <h4>{% trans "Styles" %}</h4>
+       <p>{% trans "The following styles are associated with this layer. Choose a style to view it in the preview map." %}</p>
+       <ul class="list-unstyled">
+        {% if OGC_SERVER.default.BACKEND == 'geonode.geoserver' %}
+            {% get_all_resource_styles resource as resource_styles_all%}
+            {% for style in resource_styles_all %}
+            <li>
+              {% if resource.default_style == style %}
+               <input type="radio" checked name="style" id="{{ style.name }}" value="{{ style.sld_title|default_if_none:style.name }}"/>
+              {% trans "(default style)" %}
+              {% else %}
+              <input type="radio" name="style" id="{{ style.name }}" value="{{ style.sld_title|default_if_none:style.name }}"/>
+              {% endif %}
+              <a href="{{ GEOSERVER_BASE_URL }}{{ style.absolute_url }}" >{{ style.sld_title|default_if_none:style.name }}</a>
+            </li>
+            {% empty %}
+            <li>{% trans "No styles associated with this layer" %}</li>
+            {% endfor %}
+        {% endif %}
+      </ul>
+    </li>
+    {% endif %}
+
+    {% if resource.storeType == "remoteStore" %}
+    <li class="list-group-item">
+      <h4>{% trans "External service layer" %}</h4>
+      <div>{% trans "Source" %}: <a href="{% url 'service_detail' resource.remote_service.id %}">{{ resource.remote_service.title }}</a>
+      </div>
+      <div>{% trans "Type" %}: {{ resource.remote_service.type }}</div>
+    </li>
+    {% endif %}
+
+    {% if OGC_SERVER.default.BACKEND == 'geonode.geoserver' %}
+      {% if "change_resourcebase" in perms_list and resource.storeType != "remoteStore" %}
+        {% if not READ_ONLY_MODE %}
+        <li class="list-group-item">
+          <h4>{% trans "Refresh Attributes and Statistics of this layer" %}</h4>
+          <p>{% trans "Click the button below to allow GeoNode refreshing the list of available Layer Attributes. If the option 'WPS_ENABLED' has been also set on the backend, it will recalculate their statistics too." %}</p>
+            <a href="#" class="btn btn-primary btn-block" data-dismiss="modal" id="attributes_sats_refresh">{% trans "Refresh Attributes and Statistics" %}</a>
+        </li>
+        {% endif %}
+        <li class="list-group-item">
+          <h4>{% trans "Clear the Server Cache of this layer" %}</h4>
+          <p>{% trans "Click the button below to wipe the tile-cache of this layer." %}</p>
+            <a href="#" class="btn btn-primary btn-block" data-dismiss="modal" id="tiledlayer_refresh">{% trans "Empty Tiled-Layer Cache" %}</a>
+        </li>
+      {% endif %}
+    {% endif %}
+
+    {% if GEONODE_SECURITY_ENABLED %}
+      {% if "change_resourcebase_permissions" in perms_list %}
+        {% if not READ_ONLY_MODE %}
+          <li class="list-group-item">
+            <h4>{% trans "Permissions" %}</h4>
+            <p>{% trans "Click the button below to change the permissions of this layer." %}</p>
+            <p><a href="#modal_perms" data-toggle="modal" class="btn btn-primary btn-block" data-target="#_permissions">{% trans "Change Layer Permissions" %}</a></p>
+            {% if USE_GEOSERVER and DELAYED_SECURITY_SIGNALS %}
+              <a href="#" class="btn btn-primary btn-block" data-dismiss="modal" id="security_refresh">{% trans "Sync permissions immediately" %}</a>
+            {% endif %}
+          </li>
+        {% endif %}
+      {% endif %}
+    {% endif %}
+
+    {% include "base/_resourcebase_contact_snippet.html" %}
+  </ul>
+
+  <div class="modal fade" style="width: 100%; height: 100%;" id="_perms_processing" data-backdrop="static" data-keyboard="false" aria-hidden="true">
+      <div class="modal-dialog">
+          <div class="modal-content">
+              <div class="modal-header">
+                  <h1>{% trans "Processing..." %}</h1>
+              </div>
+              <div class="modal-body">
+                  <div class="progress">
+                    <div class="progress-bar progress-bar-info progress-bar-striped active" role="progressbar" aria-valuenow="40" aria-valuemin="0" aria-valuemax="100" style="width:100%">
+                      {% trans "Updating Permissions..." %}
+                    </div>
+                  </div>
+              </div>
+          </div>
+      </div>
+  </div>
+
+  
+  <!-- 16 January 2023. For map display within decryption tab -->
+  <script type="module">			
+		//The Map!
+    
+		var map = new ol.Map({
+			target: 'map',
+			layers: [
+				new ol.layer.Tile({
+					source: new ol.source.XYZ({
+						url:'https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png',
+					})
+				})
+			],
+			view: new ol.View({
+				center: ol.proj.fromLonLat([174, -41]),
+				zoom: 5,
+				maxZoom: 13
+			})
+		}); 
+
+    function myFunction() { 
+      console.log('my function is called')           
+        var x = document.getElementById("map");
+        if (x.style.display === "none") {                               
+            x.style.display = "block";
+            map.updateSize();
+        } else {
+            x.style.display = "none";
+        }
+    }
+
+    function displayDecryptedMap(){
+      console.log('here 90')
+      //var decrypted_file_data = await decryptData
+      //`big encrypted zip file' is encrypted. So here we Decrypt it into file content into fileobject so we can iterate over each file
+      //var file = new File([decrypted_file_data], "decrypted.txt", {
+      //    type: "text/plain",
+      //}); 
+      v_objFile = encrypted_file_from_server; //file; //assign to variable used below
+      file_name = filename;
+/*
+      var jsZip = new JSZip();
+      //var fileNum = 0;
+      jsZip.loadAsync(v_objFile).then(function (zip) {
+          Object.keys(zip.files).forEach(function (filename){
+              //iterate over the zipped file 
+              zip.files[filename].async('string').then(function (fileData){
+                  console.log("\t filename: " + filename);   
+                  //if we found the shapefile file 
+                  if (filename.endsWith('.zip') )
+                  {
+                      console.log("\t file to decrypt: " + filename); // decrypt the file here //projFileName = i;                        
+                      //we decrypt the encrypted volume at that level, display and allow user to save the decrypted file                    
+                      console.log("\t For verification. We can display the map here");                                         
+                      zipfile = zip; 
+*/ 
+                      zip = encrypted_file_from_server;
+                      file_name = filename;
+                      // 23-May-2023 We have shifted this block of code to the H3Binning_verification.js file
+                      zip.file(filename).async('blob').then( (blob) => 
+                      {
+                          (async () => {
+                              const buf = await blob.arrayBuffer(); //blobToArrayBuffer(blob); //await blob.arrayBuffer();
+                              console.log("buf.byteLength: " + buf.byteLength ); // 5
+                                    
+                              shp(buf).then(function (geojson) {                                
+                                  sensitive.data  = JSON.stringify(geojson); //removeEmpty(JSON.stringify(geojson, undefined, 4)) // first use JSON.stringify ); 
+                                  $("#sensitiveTag").html("sensitive.data = " + sensitive.data + ";"); // fileData + ";"); //JSON.stringify(geojson) + ";");  
+                                  decryptedGEOJSON = sensitive.data;
+                                  console.log("Loaded geojson"); // + JSON.stringify(geojson));
+
+                                  var x = document.getElementById("map");
+                                  x.style.display = "block";
+                                  $("#map").fadeIn("slow");
+                                  var styleChoice = sensitive.style;
+                                  var source = new ol.source.Vector({
+                                    features: (new ol.format.GeoJSON()).readFeatures(decryptedGEOJSON, { featureProjection: 'EPSG:3857' })
+                                  });
+                                  decryptedGEOJSON.layer = new ol.layer.Vector({
+                                    zIndex: 9, renderMode: 'image',   source: source,    style: styleChoice
+                                  });
+                                  map.addLayer(decryptedGEOJSON.layer);        
+                                  var extent = decryptedGEOJSON.layer.getSource().getExtent();        
+                                  console.log('extent:' + extent)
+                                  //map.getView().fit(extent, { size: map.getSize(), maxZoom: 13 });                                   
+                                  map.updateSize();   
+                              });
+                            })();  
+                      }); 
+                      console.log("Displayed Map") 
+//                  } //end if                  
+ //             })   //end object keys        
+ //         }) //end jszip
+ //     }).catch(err => window.alert(err)) 
+    }
+
+    function displayDecryptedMap_old(){
+        console.log('displayDecryptedMap() function')
+        console.log('decryptedGEOJSON' + decryptedGEOJSON);	
+
+        var x = document.getElementById("map");
+        x.style.display = "block";
+
+        $("#map").fadeIn("slow");
+        decryptedGEOJSON = JSON.parse(decryptedGEOJSON)
+        //toMap2(decryptedGEOJSON, sensitive.style); 
+        
+        var styleChoice = sensitive.style;
+
+        var source = new ol.source.Vector({
+					features: (new ol.format.GeoJSON()).readFeatures(decryptedGEOJSON, { featureProjection: 'EPSG:3857' })
+				});
+				decryptedGEOJSON.layer = new ol.layer.Vector({
+					zIndex: 9,
+					renderMode: 'image',
+					source: source,
+					style: styleChoice
+				});
+				map.addLayer(decryptedGEOJSON.layer);        
+				var extent = decryptedGEOJSON.layer.getSource().getExtent();        
+				console.log('extent:' + extent)
+				//map.getView().fit(extent, { size: map.getSize(), maxZoom: 13 }); 
+        
+        map.updateSize();       
+    }
+
+    document.getElementById("displayMap").onclick = displayDecryptedMap;
+
+		/*var map = new ol.Map({
+        target: 'map',
+        layers: [
+          new ol.layer.Tile({
+            source: new ol.source.OSM()
+          })
+        ],
+        view: new ol.View() 
+      }); */
+
+	</script>
+
+  
+
+  {% if GEONODE_SECURITY_ENABLED %}
+    {% include "_permissions_form.html" %}
+  {% endif %}
+
+  </div> <!-- col-md-4 -->
+</div> <!-- row -->
+{% endblock %}
+
+{% block extra_script %}
+{{ block.super }}
+    {% if request.user.is_authenticated %}
+        {% user_rating_js request.user resource "layer" %}
+    {% else %}
+      {% overall_rating resource 'layer' as the_layer_rating %}
+    {% endif %}
+    {% include 'rating.html' %}
+    {% include 'request_download.html' %}
+
+    <script type="text/javascript">
+      $("#comment_submit_btn").click(function(event) {
+          $.ajax({
+            type: "POST",
+            url: $("#form_post_comment").attr('action'),
+            data: $("#form_post_comment").serialize(),
+            success: function() {
+              $('#form_post_comment_div').modal().find('form')[0].reset();
+              $('#form_post_comment_div').modal('hide');
+              $('#comments_section').load(window.location.pathname + ' #comments_section',
+                  function(){$(this).children().unwrap()})
+            }
+          });
+          return false;
+        });
+
+        {% if resource.get_legend.link_type == 'json' %}
+        $.getJSON('{{ resource.get_legend_url }}', function (data) {
+            var legend = data.layers[0].legend;
+            var items = [];
+            $.each(legend, function (key, dvalue) {
+                items.push('<li><img src="data:image/png;base64,' + dvalue.imageData + '">'+dvalue.label+'</li>');
+            });
+
+            $('<ul/>', {
+                'class': 'arcgis-legend',
+                html: items.join('')
+
+            }).appendTo('#legend_placeholder');
+        });
+        {% endif %}
+    </script>
+
+    {% block thumbnail_script %}
+      <script type="text/javascript">
+            {% if preview == 'react' %}
+            $('#set_thumbnail').click(function(){
+              window.setThumbnail({{resource.id}})
+              $('#edit-layer').modal('toggle');
+            });
+            {% else %}
+            $('#set_thumbnail').click(function(){
+              createMapThumbnail();
+              $('#edit-layer').modal('toggle');
+            });
+            {% endif %}
+      </script>
+    {% endblock thumbnail_script %}
+    
+
+
+  <!-- 16-May-2022 The DS Tools Tab-->  
+    <script type="text/javascript">
+    //will add another file upoad here in the encryption section so users can directly come to the encyprytion section and
+    //upload their encrypted data and decrypt it.
+    
+    //trigger on the private key file upload for the OpenPGP decryption 
+    $(document).ready(function(){
+        console.log("document.body.onload() gets called a: ");
+        $("#fileToLoad").on('change',function(){
+            //do whatever you want
+            loadFileAsTextForDec();
+        });
+        //map.updateSize(); this does not work
+    });
+
+    $(window).on('load', function() {
+      console.log('All assets are loaded')
+      map.updateSize();
+    })
+
+    /*
+    var map = new ol.Map({
+			target: 'map',
+			layers: [
+				new ol.layer.Tile({
+					source: new ol.source.XYZ({
+						url:'https://basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}.png',
+					})
+				})
+			],
+			view: new ol.View({
+				center: ol.proj.fromLonLat([-100, 45]),
+				zoom: 3,
+				maxZoom: 13
+			})
+		}); 
+    */
+
+    //08-June-2022. After page loads, call the verification of hash procedure
+    //https://stackoverflow.com/questions/14226803/wait-5-seconds-before-executing-next-line
+    //https://linuxhint.com/window-onload-event-in-javascript/
+ /*   function js_onload_code (){
+      //await delay(5000);
+      setTimeout(function () {
+        //get the hash value from blockchain
+
+        //get the hash of the encrypted file
+        var blob = new Blob([resultbytes],{type: 'text/plain'} ); // save as Blob         
+        //18-02-2022..store it as global variable so that it can be sent to geonode document endpoint, if user wants
+        //global_finalEncryptedZipFile = blob2;         
+        //compute hash of the final encrypted volume file (level 3).
+        //https://stackoverflow.com/questions/21761453/create-sha-256-hash-from-a-blob-file-in-javascript
+        const hashHex = await getHash("SHA-256", blob)
+        hashValue = hashHex;          //finally UPDATE THE GLOBAL VARIABLE 'HASH'
+        console.log('hashHex: ' + hashHex); 
+
+        //used to display hash 
+        //function display_hash() {
+            console.log("displaying hash2: " + hashValue); 
+            //if(hash_value === null)
+            if (typeof hashValue == 'undefined'){
+                alert("No hash to display");
+                console.log('No hash to display');
+            }
+            else 
+                hashOutput.textContent = hashValue;         //display hash    
+        //}
+
+        //if (newState == -1) {
+        //    alert('VIDEO HAS STOPPED');
+        //}
+        //if(hashVerified == true)
+          document.getElementById("hashVerified").checked = true;
+        //else
+        //  document.getElementById("hashVerified").checked = false;
+        console.log("Waited 5s");
+        //alert(" Hello, you are learning onload event in JavaScript");
+
+      }, 5000);
+      
+    }  */
+
+//    window.onload = js_onload_code(); 
+    //const delay = ms => new Promise(res => setTimeout(res, ms));
+
+    var option = 2; //1=Web.crypto, 2=OpenPGP
+
+    //Decrypts a user's uploaded encrypted file - only for testing MultiLevel Encryption
+    //this is the function that will be called when the user clicks the download decrypted button
+    //Needs user to upload a file -- this fuction is just to test if our file upload for decryption works on this page
+    function downloadDecrypted_uploadedFile() {
+          console.log("downloadDecrypted_uploadedFile: ");
+
+         
+
+          if (option == 1){
+            var mainPassphrase = document.getElementById("txtDecpassphrase").value;
+            console.log("passphrase: " + mainPassphrase);
+            if (mainPassphrase == "") { alert("Passphrase must be filled out"); return false;  } //validate passphrase
+          
+            //console.log("Map or Document Decryption (we don't know yet): ");
+            //get level to decrypt
+            //var lev = document.getElementsByName('vol_decrypt');
+            //https://stackoverflow.com/questions/15839169/how-to-get-value-of-selected-radio-button/26236365
+            var levelToDec = document.querySelector('input[name="vol_decrypt"]:checked').value;
+            console.log('level to decrypt = ' + levelToDec);
+          }
+
+          //objFile parameter has already been read in, last parameter just adds files to the zip
+          //05June-2022. We can choose either option
+          if (option == 1)
+            var decryptedData = multiLevelDecrypt(objFile, levelToDec, 3, mainPassphrase); //levelToDecrypt,currentLevel
+          else if(option == 2)
+          {
+            console.log('OpenPGP decryption');
+            //Call OpenPGP decryption
+            //similar to line 999, we have to first covert the blob into ciphertext          
+            
+            let reader = new FileReader();
+            reader.readAsText(objFile); //the file has already been uploaded, this 'objFile' is assigned in the openFile function in dstools.js
+            reader.onload = function() { 
+              //console.log('reader.result: ' + reader.result); 
+                            //ciphertextInFile //myBlob.text()
+              callOpenPGPDecrypt(reader.result, levelToDec, 1); //08-may2022..changed level from 3 to 1.  // myFile
+            };
+            reader.onerror = function() { console.log('reader.error:' + reader.error); };
+            
+            //callOpenPGPDecrypt(ciphertextInFile, v_levelToDec, 1); //08-may2022..changed level from 3 to 1.  // myFile
+          }
+		}
+
+    //this is the function that will be called when the user clicks the download decrypted button
+    //Will fetch the file -- this function will first fetch the file from the geonode repo and then decryt it 
+    function downloadDecrypted() 
+    {
+      console.log("Decryption: ");
+      var levelToDec; //level to decrypt
+     
+//$$      waitingDialog.show('Decryption...');
+
+      var choice = 2; //1= web.crypto, 2 = OpenPGP
+
+      if(choice == 1) {
+        var mainPassphrase = document.getElementById("txtDecpassphrase").value;
+        console.log("passphrase: " + mainPassphrase);
+        if (mainPassphrase == "") { alert("Passphrase must be filled out"); return false;  } //validate passphrase
+        console.log("passphrase A: " + mainPassphrase); 
+        //one of the option buttons for levels (coarse.medium and fine) should be selected at this point
+        if ($("input[name='vol_decrypt']").is(':checked') ) {
+          levelToDec = document.querySelector('input[name="vol_decrypt"]:checked').value;
+          console.log('level to decrypt = ' + levelToDec);
+        }        
+        else{  //if (levelToDec === null)
+          //alert('Please select a Level to decrypt!');
+          console.log('level to decrypt not chosen. Assigning value of 1 ');
+          levelToDec = 1; //default level to decrypt //decrypt to the deepest level (3 being the outermost)
+        }
+      }
+
+      /*      
+      console.log("Checking if there is a linked geonode document for this layer");
+      //get the encrypted file from the geonode repo
+      fetch($("ul.list-unstyled a[href^='/documents/']")[0].href + "/download")
+        //.then(r => r.text()) // r is a blob, r.text() is a Promise which returns the text of the blob file
+        .then(r => r.ok()) //A boolean indicating whether the response was successful (status in the range 200–299) or not.          
+          .then(body =>                          //https://developer.mozilla.org/en-US/docs/Web/API/Response
+              console.log('success' + body)        
+      ).catch(error => console.log(error));
+      */
+
+      //get the encrypted file from the geonode repo
+      var linked_document = $("#wrap ul.list-unstyled a[href^='/documents/']")[0]
+      if (linked_document) 
+      {
+          /* provided code
+          fetch(linked_document.href + "/download").then(r => 
+            r.blob()).then(blob => recursiveDecrypt(blob, 3, 3)
+          ).catch(error => console.log(error));
+          */
+        console.log("Found Linked document for this Layer");
+        console.log("Fetching the encrypted zipped file stored as a geonode document ");
+
+        fileName = $("ul.list-unstyled a[href^='/documents/']").first().text(); //"encrypted_file.zip.enc";
+        console.log('Retrieved fileName = ' + fileName);  //all_clusters_kamloops.zip.enc
+
+        //get the encrypted file from the geonode repo
+        fetch($("ul.list-unstyled a[href^='/documents/']")[0].href + "/download")
+          //.then(r => r.text()) // r is a blob, r.text() is a Promise which returns the text of the blob file
+          .then(r => r.blob())  //we need the text for OpenPGP decrypt function : the save would need the blob 
+            .then(blob =>    //body   //blob is needed for web.crypto       
+              //saveas works              
+              //saveAs(blob, "toDecryptFile.zip") //not sure for this -> saveAs(body, "decryptedVolume_.zip")
+              //myFile = new File([blob], fileName, blob)
+              //var file = new File(fileContentAsString, filename);
+              //recursiveDecrypt(new File(body, "test.zip.enc"), v_levelToDec, 3);  //file //blob //fileContentAsString
+              
+//              callFunction(myFile, levelToDec, passphrase)    //`body' is in string format --- of the encrypted zipped file
+           callDecryptionFunction(blob, levelToDec, mainPassphrase, option)    //`body' is in string format --- of the encrypted zipped file
+              //console.log('encrypted zipped file contents' + body)        
+        ).catch(error => console.log(error));
+      }
+      else{ //we inform the user that there is no linked document for this layer
+          console.log("No Linked document found");
+          alert("No Linked document found!");
+      }   
+
+      //enable display button
+      displayMap.enabled = true;
+
+    }
+
+    function loadingOut(loading) {
+				setTimeout(() => loading.out(), 1000);
+		}
+    
+    function callDecryptionFunction(myBlob, v_levelToDec, mainPassphrase, option) //for multiLevel, we pass the blob
+    //function callDecryptionFunction(ciphertextInFile, v_levelToDec) //for OpenPGP, we pass the text
+    {  //fileContentAsString
+        console.log('Inside callFunction()'); 
+        console.log("passphrase B: " + mainPassphrase);
+        //console.log('myBlob = ' + myBlob);
+        var filename = "encrypted_file.zip.enc";
+        
+        //to get the filenames
+        //layer title: $("h2.page-title").text()
+        //linked document title: $("ul.list-unstyled a[href^='/documents/']").first().text()
+        fileName = $("ul.list-unstyled a[href^='/documents/']").first().text(); //"encrypted_file.zip.enc";
+        console.log('Retrieved fileName = ' + fileName);  //all_clusters_kamloops.zip.enc
+        //fileName = fileName.substring(0, fileName.indexOf("."));   //remove the ''.zip.enc'' so that the level and zip can be added as file extension
+        //console.log('Modified fileName = ' + fileName);
+
+        //needed for multiLevel decrypt
+        /* const myFile = new File([myBlob], filename, {
+            type: 'application/zip', //myBlob.type,
+        }); */
+        //const myFile = new File([myBlob], fileName, myBlob);
+        encrypted_file_from_server = new File([myBlob], fileName, myBlob);
+        
+        //console.log('file: ' + myFile);
+
+        //Now when we check the instance it’ll be a File.
+//        console.log(myFile instanceof File);        // logs: true
+        //But, as it inherits from Blob it’ll also be a Blob.
+//        console.log(myFile instanceof Blob);        // logs: true        
+        
+        
+
+        //saveAs(myFile,'test.txt'); //downloads the OpenPGP encrypted message
+
+        //$('body').Wload({text:' Decrypting'})	
+        if(option == 1)
+          multiLevelDecrypt(encrypted_file_from_server, v_levelToDec, currentLevel = 3, mainPassphrase); //file //blob //fileContentAsString
+        else if (option == 2){
+          //first we have to covert the blob into ciphertext          
+           /* This code block only useful for text files decryption, doesnt work for zip (binary) files
+           let reader = new FileReader();
+           reader.readAsText(myFile);
+           reader.onload = function() { 
+              //console.log('reader.result: ' + reader.result); 
+                            //ciphertextInFile //myBlob.text()
+              callOpenPGPDecrypt(reader.result, v_levelToDec, 1); //08-may2022..changed level from 3 to 1.  // myFile
+              
+           };
+           reader.onerror = function() { console.log('reader.error:' + reader.error); };
+           */
+           //for binary files, we pass the file object
+                                    //myFile
+           callOpenPGPDecrypt_zipFile(myBlob, v_levelToDec, 1); //08-may2022..changed level from 3 to 1.  // myFile
+        }
+
+        //loadingOut(loading); //unload the loading animation
+        //$('body').Wload('hide',{time:3000})
+    } 
+
+    //16-Jan-2023 Code from this function is integrated as part of the module ~ line 800
+    //So function no longer used
+    //Adds a geojson layer to the map, using the selected OpenLayers style
+		/*
+    toMap2 = function(sourceGeoJSON, styleChoice) {
+				//delete sourceGeoJSON.layer;
+				//map.removeLayer(sourceGeoJSON.layer);
+
+        console.log('toMap2')
+
+        var source = new ol.source.Vector({
+					features: (new ol.format.GeoJSON()).readFeatures(sourceGeoJSON, { featureProjection: 'EPSG:3857' })
+				});
+				sourceGeoJSON.layer = new ol.layer.Vector({
+					zIndex: 9,
+					renderMode: 'image',
+					source: source,
+					style: styleChoice
+				});
+				map.addLayer(sourceGeoJSON.layer);        
+				var extent = sourceGeoJSON.layer.getSource().getExtent();        
+				console.log('extent:' + extent)
+				map.getView().fit(extent, { size: map.getSize(), maxZoom: 13 }); 
+        
+        map.updateSize(); 
+			  //mapContainer.updateSize();
+			  //map.resize();
+		}
+    */
+    
+    var textFromFileLoaded; //to hold user's private key read from uploaded file 
+
+    //02-May-2022 User's Public key upload
+    function loadFileAsTextForDec(){      
+      var fileToLoad = document.getElementById("fileToLoad").files[0];
+      var fileReader = new FileReader();
+      fileReader.onload = function(fileLoadedEvent){
+          textFromFileLoaded = fileLoadedEvent.target.result;
+          document.getElementById("inputTextToSave").value = textFromFileLoaded;
+          console.log('textFromFileLoaded: ' + textFromFileLoaded);
+      };
+      fileReader.readAsText(fileToLoad, "UTF-8");
+    }
+
+    
+     var decryption_tab = $(`
+          <article id='decryption' class='tab-pane'> 
+          
+          <div> 
+                <!-- Web Crypto code was here -->      
+    
+                <!-- Call 03 May 2022 OpenPGP Decryption -->
+                <h4> OpenPGP Decryption (uses Asymmetric keys) </h4>
+                <!-- <br> Only one level encryption and decryption. Three levels not needed with OpenPGP encryption  -->
+                <!-- <br> Note: we use the same decryption functions as in above, but thenon, pass to OpenPGP decryption. -->
+                <br> Decrypt the layer by providing your private key.
+                Alternatively, you can download the document (containing the encrypted layer), and use the OpenPGP desktop tool <a href="https://www.openpgp.org/software/kleopatra/">Kleopatra</a>, to decrypt inputing your private key.
+                <br> </br>
+
+                <!--
+                <span class="tooltiptext"><h5>1. Load your zipped encrypted file for decryption (or decrypt the stored layer in GeoNode).</h5></a> </span></span>              
+                // 19-10-21. The filevalidation function is also called fom inside the openFile function  
+                <input type="file" id="encryptedInputOpenPGP" onchange='openFile(event)' accept=".enc" >
+                -->
+
+              <style> 
+                  .tableOne {  margin:auto;              align : center;     text-align: center;   }
+                  .tableOne td {   text-align: center;   padding: 5px;        }
+                   td {    padding: 5px;                 align : center;      }
+                </style>
+    
+              <h5>1. Load your private key </h5>
+              <table class="tableOne"> <!-- cellpadding="10" cellspacing="10" -->
+                <tr>
+                  <td align="center" rowspan="5" > 
+                    <textarea id="inputTextToSave" name="inputTextToSave" style="width:400px;height:150px;" value="" placeholder="Paste your private key here...OR Load it from file"></textarea>  
+                  </td>
+                  <!-- <td align="center"> OR Load it from file:</td> -->
+                </tr>
+    
+                <tr>
+                  <td align="center"> <input type="file" id="fileToLoad">  </td>
+                </tr>
+
+                <!-- <tr>
+                  <td style="text-align:left"> <button class="buttondss buttondss4" onclick="loadFileAsTextForDec()">Load</button>   </td>
+                </tr> -->
+
+                <td> &nbsp </td>
+                <td> &nbsp </td>  
+              </table>
+
+              <div>
+                  <label>2. Enter Private key's Passphrase</label>
+                  <input type="password" class="form-control" id="pass" placeholder="Enter passphrase">
+                </div>  
+
+              <tr>
+                  <h5>3. Decrypt and Display</h5>
+                  <!-- <input type="button" width="250px" value="Download Decrypted" class="buttondss buttondss6" onclick="downloadDecrypted()"/>  -->                  
+                  <!--              
+                    <button id="dwnDecUploadedFileOpenPGP" style="margin: 0.5rem 0 .5rem 0; width: 30%;" onclick="downloadDecrypted_uploadedFile()" class="buttondss buttondss6">Decrypt uploaded Layer</button>
+                    Decrypt file (use 'Choose File' in above section) and Download<br>
+                  -->
+                  <button id="dwnDecryptedOpenPGP" style="margin: 0.5rem 0 .5rem 0; width: 30%;" onclick="downloadDecrypted()" class="buttondss buttondss6">Decrypt Layer and Download</button>
+                  <button id="displayMap"          style="margin: 0.5rem 0 .5rem 0; width: 30%;"  class="buttondss buttondss6">  Display Map </button>
+                  <!-- Or Decrypt the stored encrypted layer in Geonode and then Download <br> onclick="displayDecryptedMap()" disabled -->
+              </tr> 
+
+              <!-- Display map here display: none; -->
+              <div id="map" style="height:40vh; width: 79vh; " ></div> 
+              
+            <div>
+              <a id=aDecsavefile hidden><button>Save Decrypted File</button></a>
+            </div>
+          </div> 
+          </article>`);
+          
+
+      document.getElementById("displayMap").onclick = displayDecryptedMap;
+
+  </script>  
+  <!-- End DS Tools tab -->
+
+  <script type="text/javascript">
+
+      // set default values for the logical operator list
+      $("#modal-button-and-or:first-child").text($("#AND").text());
+      $("#and-or_list li:not(.divider)").addClass('selected');
+
+      // on dropdown change, change the value of dropdown
+      $(".dropdown-menu-attribute,.dropdown-menu-and-or,.dropdown-menu-operator")
+        .find('li a')
+        .on('click', function(e) {
+          var id = $(this).closest('[data-modal-button-id]').data().modalButtonId;
+          $('#modal-button-'+id+':first-child').text($(this).text());
+        });
+
+      // on first click create an array & save initial URLs
+      enable_filter_style = {"background-color": "#a7a3a3", "border-color": "#a7a3a3"};
+      $("#button-toggle").one( "click", function() {
+        query=[];
+        ajax_loaded = false;
+        json_url = $("#geojson").attr("href");
+        excel_url = $("#excel").attr("href");
+        csv_url = $("#csv").attr("href");
+        shape_url = $("#zipped-shapefile").attr("href");
+        gml2_url = $("#gml-20").attr("href");
+        gml3_url = $("#gml-311").attr("href");
+        all_urls = {'geojson' : json_url, 'excel' : excel_url, 'csv' : csv_url, 'zipped-shapefile' : shape_url, 'gml-20': gml2_url, 'gml-311': gml3_url};
+      });
+
+      // add class selected when an element from the list is clicked.
+      $("#operator_list li:not(.divider),#attribute_list li:not(.divider),#and-or_list li:not(.divider)").click(function(){
+        // Ensure only the current one is selected
+        var id = $(this).closest('[data-modal-button-id]').data().modalButtonId;
+        $("#"+id+"_list li:not(.divider)").removeClass('selected');
+        $(this).addClass('selected');
+      });
+
+      $(document.body).on("click", "#button_query",function(e){
+        $(".text_area").css("visibility", "visible");
+        attribute_list = $("#attribute_list li.selected a").attr('id');
+        operator_list = $("#operator_list li.selected a").attr('id');
+        single_value_input = ($("#single_value").val()).trim();
+        logical_operator_dropdown = $("#and-or_list li.selected a").attr('id');
+        attribute_data_type = $("#attribute_list li.selected a").attr('data-type');
+        attribute_data_schema = $("#attribute_list li.selected a").attr('data-schema');
+        if(attribute_list == null || operator_list == null || single_value_input == "" ||  logical_operator_dropdown == null){
+          if($("#missing-values").length == 0) {
+            $("#query-filter-tools").after( "<p id='missing-values'> Select all values from menus.</p>" );
+          }
+        } else {
+            if($("#missing-values").length !== 0) {
+              $( "p" ).remove( "#missing-values" );
+            }
+            // validation that user enters a string for a string attribute or a number for a number attribute
+            var single_value_input = '';
+            try {
+                single_value_input = ($('#single_value').select2('data')[0].text).trim();
+            } catch (err) {
+                single_value_input = '';
+            }
+
+            if (attribute_data_schema == 'yes' && attribute_data_type !== 'string' && isNaN(single_value_input)){
+              if($("#wrong-data-type").length !== 0) {
+                  $('#wrong-data-type').empty();
+              }
+              $("#query-filter-tools").after( "<p id='wrong-data-type'> You entered a string. Not a number.</p>" );
+            } else {
+              $( "p" ).remove( "#wrong-data-type" );
+              // check of single_value_input; string or number
+              let checkArr = ["=", "<>", ">", "<", ">=", "<="];
+              if (checkArr.includes(operator_list)) {
+                if (isNaN(single_value_input)){
+                  single_value_input = "'" + single_value_input.replace(/'/g, "''") + "'";
+                }
+              } else if (operator_list == " LIKE ") {
+                if(single_value_input.indexOf('%') >= 0) {
+                  single_value_input = "'" + single_value_input.replace(/%/g, '%25') + "'";
+                } else {
+                  single_value_input = "'%25" + single_value_input + "%25'";
+                }
+              }
+
+              input = attribute_list + operator_list + single_value_input;
+              input_id = attribute_list + single_value_input;
+
+              $("#added_rules").append( '<div class="input-group user-input-filters"><div class="input-group-btn" id="erase_query"><a href="#"  class="btn btn-primary btn-mg" data-toggle="modal" data-target="#myModal" title="" ><span class="glyphicon glyphicon-minus"></span></a></div><input type="text" class="form-control" id="' + input_id + '" placeholder="" data-toggle="tooltip" title="" value="' + input + '"readonly></br></div>');
+              // push data to array
+              if (single_value_input != ''){
+                  query.push(input);
+              }
+            }
+        }
+      });
+
+      $("div").on("click","#erase_query",function(){
+        value_to_be_removed = $(this).siblings('input').val();
+        var index = query.indexOf(value_to_be_removed);
+        query.splice(index, 1);
+        $(this).parent().remove();
+      });
+
+      // on url click append the array values in the existing href
+      $(document.body).on("click", ".urls",function(e){
+        var tab = $('#tabContent .active > a').attr('href')
+        logical_operator = $("#and-or_list li.selected a").attr('id');
+        // get the array, join it, add necessary values and add it in the UI
+        if (typeof query !== 'undefined') {
+          joined_query = query.join(" " + logical_operator + " ");
+          cql_filters = joined_query;
+        } else{
+          cql_filters = '';
+        }
+        // get max features
+        max_features = $('#max_features').val();
+        if (max_features !== "" && Math.floor(max_features) == max_features && $.isNumeric(max_features)){
+          complete_cql = "&CQL_FILTER=(" + cql_filters + ")&maxfeatures=" + max_features;
+        } else {
+          complete_cql = '&CQL_FILTER=(' + cql_filters + ')';
+        }
+        idValue = $(this).attr("id");
+
+        if (idValue !== "original-dataset" && typeof all_urls !== 'undefined') {
+            url_main = all_urls[idValue]
+          if(cql_filters.length >1) {
+            addressValue = url_main + complete_cql
+            $("#"+idValue).attr("href", addressValue)
+          } else{
+            addressValue = url_main
+            $("#"+idValue).attr("href", addressValue)
+          }
+        }
+      });
+
+      $("#button-toggle").css( enable_filter_style );
+      // change color of toggle button on click
+      $("#button-toggle").click(function() {
+        $(this).toggleClass("clicked");
+        if ($("#button-toggle").hasClass("clicked")) {
+          $("#button-toggle").css({ "background-color": "#3276b1", "border-color": "#3276b1"  });
+          layer_name = {{ layer_name | safe }};
+          filtered_attributes = {{ filtered_attributes | safe }}
+          attribute_description = {{ attribute_description | safe }}
+          whole_url = "{% url 'load_layer_data' %}";
+          if (!ajax_loaded) {
+            $.ajax({
+              type: "POST",
+              url: whole_url,
+              data: { json_data: JSON.stringify({ layer_name: layer_name, filtered_attributes: filtered_attributes }) },
+              beforeSend: function (xhr) {
+              {% if request.user.is_authenticated and access_token %}
+                xhr.setRequestHeader ("Authorization", "Bearer {{access_token}}");
+              {% endif %}
+                $( ".loading_msg" ).show();
+              },
+              success: function(data) {
+                $('#tabContent, .query_builder_tab').show();
+                $( ".loading_msg" ).hide();
+                // on dropdown change, change the value of dropdown
+                $(".dropdown-menu-attribute li a").click(function(){
+                  $("#modal-button-attributes:first-child").text($(this).text()).val($(this).text());
+
+                  // functionality added for the autocomplete
+                  property_name = $(this).attr("id");
+                  attribute_values = data['feature_properties'];
+                  selected_data = attribute_values[$.trim(property_name)];
+                  selected_data_prepare = [];
+                  for (i = 0; i < selected_data.length; i++) {
+                    var jsonString = {
+                      id: i,
+                      text: selected_data[i].toString()
+                    };
+                    selected_data_prepare.push(jsonString);
+                  }
+
+                  $("#single_value").empty();
+                  $("#single_value").select2({
+                    data: selected_data_prepare,
+                    // allow new values by the user
+                    tags: true
+                  });
+                });
+                ajax_loaded = true;
+              }
+            });
+          } else {
+            $('#tabContent, .query_builder_tab').show();
+          }
+        } else {
+          $("#button-toggle").css(enable_filter_style);
+          $('#tabContent, .query_builder_tab').hide();
+        }
+        // clear filters
+        $(document.body).on("click", "#clear_filter",function(e){
+          $('#added_rules').empty();
+          $('#max_features').val("");
+          query=[];
+          $("#button-toggle").removeClass( "clicked" );
+          $("#button-toggle").css(enable_filter_style);
+          $('#tabContent, .query_builder_tab').hide();
+        });
+       
+
+
+      });
+      
+      /* 
+        <h4> Web.Crypto Decryption (uses Symmetric keys)  </h4>
+            <br> Implements three level encryption. Shown here for testing. <br> <br>
+            decryption_tab
+            <span class="tooltiptext"><h5>1. Load your zipped encrypted file for decryption (or decrypt the stored layer in GeoNode).</h5> </a> </span></span>            
+            <!-- 19-10-21. The filevalidation function is also called fom inside the openFile function  -->
+            <input type="file" id="encryptedInput" onchange='openFile(event)' accept=".enc" >
+          
+            <br> <h5>2. Choose Volume To Decrypt</h5>
+            <div id="ChooseVolumeToDecrypt" class="tabcontent">												
+                  <input type="radio" id="coarse" 		name="vol_decrypt" value="3">    	<label for="coarse">Coarse</label>
+                  <input type="radio" id="medium" 		name="vol_decrypt" value="2">	    <label for="medium">Medium</label>
+                  <input type="radio" id="fine"       name="vol_decrypt" value="1">   	<label for="fine"> Fine</label>
+                <br> </br>
+            </div>			
+
+            <p><h5>3. Enter passphrase (the 5 words for coarse level, 10 for medium and 15 for fine)</h5>       
+              <input id=txtDecpassphrase type=text  size=85 value=''>																										
+              
+
+        <!-- 05 May 2022 comented out the original download decrypted button -->
+             <div> 
+                <h5>4. Decrypt</h5>
+                <button id="dwnDecUploadedFile" style="margin: 0.5rem 0 .5rem 0; width: 30%;" onclick="downloadDecrypted_uploadedFile()" class="buttondss buttondss6">Decrypt uploaded Layer</button>
+                Decrypt the just uploaded encrypted layer and Download <br>
+                <button id="dwnDecrypted" style="margin: 0.5rem 0 .5rem 0; width: 30%;" onclick="downloadDecrypted()" class="buttondss buttondss6">Decrypt stored Layer</button>
+                Or Decrypt the stored encrypted layer in Geonode and then Download <br>
+              </div> 
+
+                <br> </br> 
+                <!-- <br> </br> -->
+      */
+
+     
+
+      $("div.layer-actions ul.nav-tabs").append("<li><a href='#decryption' data-toggle='tab'><i class='fa fa-lock'></i>Decryption</a></li>")
+      //$("#wrap div.tab-content").first().append("<article id='decryption' class='tab-pane'> Your tab content here </article>")
+      $("#wrap div.tab-content").first().append(decryption_tab)
+      
+      myFunction();
+      
+      {% if show_popup %}
+        $('#download-layer').modal('toggle');
+      {% endif %}
+      
+      document.getElementById("displayMap").onclick = displayDecryptedMap;
+
+  </script>
+
+    {% if GEONODE_SECURITY_ENABLED %}
+    {% include "_permissions_form_js.html" %}
+      <script type='text/javascript'>
+            $(function() {
+                if (sessionStorage.getItem("security_refresh_trigger")) {
+                    sessionStorage.clear();
+                    $("#security_refresh").trigger('click');
+                }
+            });
+      </script>
+    {% endif %}
+
+    {% if FAVORITE_ENABLED %}
+    {% include "favorite/_favorite_js.html" %}
+    {% endif %}
+{% endblock extra_script %}
+
