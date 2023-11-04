@@ -2,7 +2,7 @@
 
 The Indigenous Geospatial Data Sovereignty application is a decentralized geoprivacy framework that implements security functions at the core – within the client’s browser so that no sensitive data leaves the computer unprotected – enabling Indigenous users to protect, share, and control access to geospatial data by themselves and eliminating reliance on a third party. An overview of the safeguarding and verification processes is shown in Figure 1. The architecture has two main components: a data privacy front-end (implemented into GeoNode) and a back-end that includes the blockchain and the cloud. 
 
-![alt text](https://github.com/sharmapn/geonode_datasovereignty/blob/main/Methodology_IGDS_Geonode7.png)
+![alt text](https://github.com/sharmapn/geonode_datasovereignty/blob/main/Methodology_IGDS_Geonode7.drawio.png)
 
 Multiple geospatial data safeguarding functions (geomasking, encryption, and notarization), along with verification features are leveraged from the browser for complete protection and are demonstrated in a video (https://www.youtube.com/watch?v=de-mZtjYFnU).
 
