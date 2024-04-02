@@ -6,6 +6,8 @@ The Indigenous Geospatial Data Sovereignty application is a decentralized geopri
 
 Multiple geospatial data safeguarding functions (geomasking, encryption, and notarization), along with verification features are leveraged from the browser for complete protection and are demonstrated in a video (https://www.youtube.com/watch?v=de-mZtjYFnU).
 
+[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/9aWbBVhRNRo/0.jpg)](https://www.youtube.com/watch?v=9aWbBVhRNRo)
+
 
 **Changes to Layers upload and Layer detail pages**
 
