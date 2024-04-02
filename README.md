@@ -4,7 +4,7 @@ The Indigenous Geospatial Data Sovereignty application is a decentralized geopri
 
 ![alt text](https://github.com/sharmapn/geonode_datasovereignty/blob/main/Methodology_IGDS_Geonode7.drawio.png)
 
-Multiple geospatial data safeguarding functions (geomasking, encryption, and notarization), along with verification features are leveraged from the browser for complete protection and are demonstrated in a video (https://www.youtube.com/watch?v=de-mZtjYFnU).
+Multiple geospatial data safeguarding functions (geomasking, encryption, and notarization), along with verification features are leveraged from the browser for complete protection and are demonstrated in a video (https://www.youtube.com/watch?v=9aWbBVhRNRo&ab_channel=BioHeritageChallenge).
 
 [![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/9aWbBVhRNRo/0.jpg)](https://www.youtube.com/watch?v=9aWbBVhRNRo)
 
@@ -23,7 +23,7 @@ Included in this repository are files that need to be placed in the right direct
 
 **Geonode user's public key**
 
-To accommodate the storage of each geonode user's public key and population, the following SQL code has to be executed, and slight changes have to be made to code in some files:
+To accommodate the storage of each GeoNode user's public key and population, the following SQL code has to be executed, and slight changes have to be made to code in some files:
 
 -- First, add the column to the database table
 ```
